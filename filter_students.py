@@ -3,8 +3,8 @@ import pandas as pd
 from io import BytesIO
 import os
 
-st.set_page_config(page_title="Student Filter Tool v3", page_icon="🎓", layout="centered")
-st.title("🎓 Student Filter Tool — Upload or Paste Search Data")
+st.set_page_config(page_title="Student Filter Tool", page_icon="🎓", layout="centered")
+st.title("🎓 Student Filter Tool")
 
 st.write("""
 Upload your **main student dataset**, then either **upload a search file** *or* **paste IDs/emails manually**.
