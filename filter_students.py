@@ -1,77 +1,103 @@
-
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import os
 
+st.set_page_config(page_title="Student Filter Tool v2", page_icon="🎓", layout="centered")
+st.title("🎓 Student Filter Tool — Multi-Column Matching")
 
-st.set_page_config(page_title="Student Filter Tool", page_icon="🎓", layout="centered")
-st.title("🎓 Student Filter Tool")
+st.write("""
+Upload your **main student dataset** (large file) and a **search file** (event signup, attendance, etc.).
+You can match on one or more columns, such as *Banner ID*, *Email*, or *Name*.
+""")
 
-st.write("Upload your main student Excel/CSV file and paste the list of Student IDs you want to extract.")
-
-# Upload main student data
-main_file = st.file_uploader("Upload the main student data file", type=["xlsx", "csv"])
-
-
-if main_file:
-    import os
-    ext = os.path.splitext(main_file.name)[1].lower()
-
-    if ext == '.csv':
-        df = pd.read_csv(main_file)
-    elif ext == '.xlsx':
-        df = pd.read_excel(main_file, engine='openpyxl')
-    elif ext == '.xls':
-        df = pd.read_excel(main_file, engine='xlrd')
+# ---------- Helper: load Excel/CSV safely ----------
+def load_file(file):
+    ext = os.path.splitext(file.name)[1].lower()
+    if ext == ".csv":
+        return pd.read_csv(file)
+    elif ext in [".xlsx", ".xls"]:
+        try:
+            return pd.read_excel(file, engine="openpyxl")
+        except Exception:
+            return pd.read_excel(file, engine="xlrd")
     else:
         st.error(f"❌ Unsupported file format: {ext}")
         st.stop()
-    st.write("Preview:")
-    st.dataframe(df.head(10))
 
-    # Select the student ID column
-    student_col = st.selectbox("Select the Student ID column", df.columns)
+# ---------- File uploads ----------
+main_file = st.file_uploader("📘 Upload main student file", type=["xlsx", "xls", "csv"])
+search_file = st.file_uploader("📗 Upload file with students to search for", type=["xlsx", "xls", "csv"])
 
-    # Paste IDs
-    st.subheader("Paste your Student IDs below")
-    id_input = st.text_area(
-        "Enter IDs separated by commas, spaces, or newlines",
-        placeholder="Example: 12345, 67890, 11223"
-    )
+if main_file and search_file:
+    df_main = load_file(main_file)
+    df_search = load_file(search_file)
 
-    if st.button("Filter Records"):
-        if not id_input.strip():
-            st.warning("Please enter at least one Student ID.")
+    df_main.columns = df_main.columns.str.strip()
+    df_search.columns = df_search.columns.str.strip()
+
+    st.success(f"✅ Files loaded successfully.")
+    st.write(f"Main file: {len(df_main)} rows | Search file: {len(df_search)} rows")
+
+    # ---------- Select matching columns ----------
+    st.subheader("🔗 Select columns to match")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        main_cols = st.multiselect("Select matching column(s) from main file", df_main.columns)
+    with col2:
+        search_cols = st.multiselect("Select corresponding column(s) from search file", df_search.columns)
+
+    if main_cols and search_cols:
+        if len(main_cols) != len(search_cols):
+            st.error("⚠️ The number of selected columns must be equal on both sides.")
         else:
-            # Split and clean the IDs
-            ids = [x.strip() for x in id_input.replace(",", "\n").splitlines() if x.strip()]
+            if st.button("Filter Records"):
+                # ---------- Normalize types ----------
+                for m, s in zip(main_cols, search_cols):
+                    df_main[m] = df_main[m].astype(str).str.strip().str.lower()
+                    df_search[s] = df_search[s].astype(str).str.strip().str.lower()
 
-            # Convert to appropriate type
-            df[student_col] = df[student_col].astype(str)
-            ids = [str(x) for x in ids]
+                # ---------- Perform merge ----------
+                merged = pd.merge(
+                    df_main,
+                    df_search,
+                    left_on=main_cols,
+                    right_on=search_cols,
+                    how="inner",
+                )
 
-            filtered = df[df[student_col].isin(ids)]
+                # ---------- Identify missing entries ----------
+                mask = pd.Series([True] * len(df_search))
+                for m, s in zip(main_cols, search_cols):
+                    mask &= df_search[s].isin(df_main[m])
+                missing = df_search[~mask]
 
-            st.success(f"✅ Found {len(filtered)} matching records.")
-            st.dataframe(filtered.head(20))
+                # ---------- Display results ----------
+                st.success(f"✅ Found {len(merged)} matching records.")
+                st.dataframe(merged.head(20))
 
-            # Download options
-            csv_data = filtered.to_csv(index=False).encode("utf-8")
+                if not missing.empty:
+                    st.warning(f"⚠️ {len(missing)} entries from search file not found in main file.")
+                    st.dataframe(missing.head(10))
 
-            st.download_button(
-                label="⬇️ Download as CSV",
-                data=csv_data,
-                file_name="filtered_students.csv",
-                mime="text/csv",
-            )
+                # ---------- Download buttons ----------
+                csv_merged = merged.to_csv(index=False).encode("utf-8")
+                csv_missing = missing.to_csv(index=False).encode("utf-8")
 
-            # Optional Excel download
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                filtered.to_excel(writer, index=False, sheet_name="Filtered_Students")
-            st.download_button(
-                label="📘 Download as Excel",
-                data=output.getvalue(),
-                file_name="filtered_students.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+                st.download_button(
+                    "⬇️ Download matched records (CSV)",
+                    data=csv_merged,
+                    file_name="matched_records.csv",
+                    mime="text/csv",
+                )
+
+                st.download_button(
+                    "⚠️ Download missing entries (CSV)",
+                    data=csv_missing,
+                    file_name="missing_records.csv",
+                    mime="text/csv",
+                )
+
+else:
+    st.info("⬆️ Please upload both files to begin.")
